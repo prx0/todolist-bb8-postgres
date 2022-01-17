@@ -1,0 +1,32 @@
+[package]
+name = "sample_bb8_tokio_postgres"
+author = ["Maximilien DI DIO <contact@protocod.dev>"]
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bb8-postgres = "0.7.0"
+once_cell = "1.9.0"
+snafu = "0.6"
+
+[dependencies.postgres-types]
+version = "0.2.2"
+features = ["derive"]
+
+[dependencies.uuid]
+version = "0.8.2"
+features = ["v4", "serde"]
+
+[dependencies.tokio]
+version = "1"
+features = ["full"]
+
+[dependencies.chrono]
+version = "0.4.19"
+features = ["serde"]
+
+[dependencies.tokio-postgres]
+version = "0.7.5"
+features = ['with-chrono-0_4', 'with-uuid-0_8', 'with-serde_json-1']
