@@ -7,12 +7,19 @@ use tokio_postgres::types::{FromSql, ToSql};
 use tokio_postgres::{NoTls, Row, ToStatement};
 use uuid::Uuid;
 
+// Thread-safe instance of DBManager
 static DB_MANAGER_INSTANCE: OnceCell<DBManager> = OnceCell::new();
 
+// Alias to represent a postgres database connection
 pub type DBConnection<'a> = PooledConnection<'a, PostgresConnectionManager<NoTls>>;
+
+// Alias to represent a database pool connections
 pub type DBPool = Pool<PostgresConnectionManager<NoTls>>;
+
+// It can occur when your not able to get a connection from the pool
 pub type PostgresConnectionError = RunError<tokio_postgres::error::Error>;
 
+// Provide a contexts for better error handling
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("ConnectionError: {}", source))]
@@ -122,11 +129,12 @@ impl Todo {
             task,
             priority,
             created_at: chrono::offset::Utc::now(),
-            expired_at: None,
+            expired_at,
             completed_at: None,
         }
     }
 
+    // Get all todo from database
     pub async fn get_all() -> Result<Vec<Self>, Error> {
         let select_one_todo = "
         select
@@ -148,6 +156,7 @@ impl Todo {
         Ok(todo_list)
     }
 
+    // get a todo by id from database
     pub async fn get_by_id(id: &Uuid) -> Result<Self, Error> {
         let select_one_todo = "
         select
@@ -167,13 +176,16 @@ impl Todo {
         Ok(Self::try_from(&row)?)
     }
 
-    pub fn toogle_complete(&mut self) {
+    // Toggle completed_at, if None the todo is not completed,
+    pub fn toggle_complete(&mut self) {
         self.completed_at = match self.completed_at {
             Some(_) => None,
             None => Some(chrono::offset::Utc::now()),
         }
     }
 
+    // Method to persist the object in database
+    // can be calls to create or update an existing object in database
     pub async fn save(&self) -> Result<&Self, Error> {
         let insert_new_todo = "
             insert into todo (id, task, priority, created_at, expired_at, completed_at)
@@ -202,6 +214,20 @@ impl Todo {
             .await?;
         Ok(self)
     }
+
+    // Be carefull, it's not a soft-delete.
+    // this will remove the data of the object from the database.
+    // But the object himself is not dropped. So you can continue to
+    // interact with it.
+    async fn delete(&self) -> Result<&Self, Error> {
+        let delete_todo = "delete from todo where id = $1;";
+        let _ = DBManager::get()
+            .await
+            .query(delete_todo, &[&self.id])
+            .await?;
+
+        Ok(self)
+    }
 }
 
 impl<'a> TryFrom<&'a Row> for Todo {
@@ -228,6 +254,8 @@ impl<'a> TryFrom<&'a Row> for Todo {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // TODO: You can improve this by using clap to
+    // get database settings from CLI or ENV VAR
     let options = DBOptions {
         pg_params: String::from(
             "postgres://postgres:test@localhost:5432/postgres?connect_timeout=10",
@@ -235,21 +263,49 @@ async fn main() -> Result<(), Error> {
         pool_max_size: 8u32,
     };
 
+    // Create the unique instance of DBManager
     let _ = DB_MANAGER_INSTANCE.set(DBManager::new(options).await?);
 
-    let mut todo_finish_this_draft = Todo::new(String::from("Publish this draft"), PriorityLevel::High, None);
+    // Create a new todo
+    let mut todo_finish_this_draft = Todo::new(
+        String::from("Publish this draft"),
+        PriorityLevel::High,
+        None,
+    );
 
+    // Persist this todo in database,
+    // this insert the data of the object
+    // into the todo table
     todo_finish_this_draft.save().await?;
 
+    // Show the todo object
     println!("{:?}", todo_finish_this_draft);
 
-    todo_finish_this_draft.toogle_complete();
+    // Mutate the state of this todo make it completed!
+    todo_finish_this_draft.toggle_complete();
+
+    // Then, persist the object again.
+    // This update the object in database because
+    // the id of this object already exist.
     todo_finish_this_draft.save().await?;
 
+    // Display the updated todo
     println!("{:?}", todo_finish_this_draft);
 
+    // Fetch all todo from the database
     let todo_list = Todo::get_all().await?;
+
+    // As you see, there is only 1 todo in the database
+    // That's normal, we persist 2 times the same object.
     println!("{:?}", todo_list);
+
+    // Remote the object data from the database
+    // but it does not drop the rust object.
+    todo_finish_this_draft.delete().await?;
+
+    // As you see, there is no more todo in database
+    let new_todo_list = Todo::get_all().await?;
+    println!("{:?}", new_todo_list);
 
     Ok(())
 }
